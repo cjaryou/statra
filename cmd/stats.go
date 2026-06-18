@@ -1,10 +1,12 @@
 package cmd
 
 import (
+	"encoding/csv"
 	"encoding/json"
 	"fmt"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -18,6 +20,8 @@ import (
 var (
 	statsFrom string
 	statsTo   string
+	statsApp  string
+	statsCSV  bool
 )
 
 var statsCmd = &cobra.Command{
@@ -54,31 +58,53 @@ var statsCmd = &cobra.Command{
 		if platform == "android" || platform == "all" {
 			p, err := providers.NewGooglePlay()
 			if err != nil {
-				// Android optional in `all` mode if not configured yet.
 				if platform == "android" {
 					return err
-				}
+				} // in `all` mode, skip Android if not configured
 			} else {
 				r, err := p.Fetch(q, nil)
-				if err != nil && platform == "android" {
-					return err
+				if err != nil {
+					if platform == "android" {
+						return err
+					}
+					fmt.Fprintf(os.Stderr, "warning: android skipped: %v\n", err)
 				}
 				rows = append(rows, r...)
 			}
 		}
 
-		if JSONOutput {
+		rows = filterApp(rows, statsApp)
+
+		switch {
+		case JSONOutput:
 			return emitJSON(rows, q)
+		case statsCSV:
+			return emitCSV(rows)
+		default:
+			printStats(rows, q)
+			return nil
 		}
-		printStats(rows, q)
-		return nil
 	},
 }
 
-// emitJSON writes the normalized rows plus the query window as JSON to stdout.
+// filterApp keeps rows whose app id equals, or name contains, the query.
+func filterApp(rows []types.Row, query string) []types.Row {
+	if query == "" {
+		return rows
+	}
+	q := strings.ToLower(query)
+	out := rows[:0]
+	for _, r := range rows {
+		if r.AppID == query || strings.Contains(strings.ToLower(r.App), q) {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
 func emitJSON(rows []types.Row, q types.Query) error {
 	if rows == nil {
-		rows = []types.Row{} // emit [] not null
+		rows = []types.Row{}
 	}
 	out := struct {
 		From string      `json:"from"`
@@ -90,74 +116,126 @@ func emitJSON(rows []types.Row, q types.Query) error {
 	return enc.Encode(out)
 }
 
-// printStats aggregates rows per app and renders a table.
-func printStats(rows []types.Row, q types.Query) {
-	type agg struct {
-		name     string
-		platform types.Platform
-		installs float64
-		revenue  float64
-		currency string
-	}
-	byApp := map[string]*agg{}
+func emitCSV(rows []types.Row) error {
+	w := csv.NewWriter(os.Stdout)
+	_ = w.Write([]string{"platform", "app", "app_id", "kind", "date", "metric", "value", "unit"})
 	for _, r := range rows {
-		key := string(r.Platform) + "|" + r.AppID + "|" + r.App
-		a := byApp[key]
+		_ = w.Write([]string{
+			string(r.Platform), r.App, r.AppID, string(r.Kind), r.Date,
+			string(r.Metric), strconv.FormatFloat(r.Value, 'f', -1, 64), r.Unit,
+		})
+	}
+	w.Flush()
+	return w.Error()
+}
+
+type appAgg struct {
+	name     string
+	platform types.Platform
+	kind     types.Kind
+	installs float64
+	revenue  map[string]float64 // currency -> amount
+}
+
+// printStats aggregates rows per product and renders app + subscription tables.
+func printStats(rows []types.Row, q types.Query) {
+	byKey := map[string]*appAgg{}
+	for _, r := range rows {
+		key := string(r.Platform) + "|" + string(r.Kind) + "|" + r.AppID + "|" + r.App
+		a := byKey[key]
 		if a == nil {
-			a = &agg{name: r.App, platform: r.Platform}
-			byApp[key] = a
+			a = &appAgg{name: r.App, platform: r.Platform, kind: r.Kind, revenue: map[string]float64{}}
+			byKey[key] = a
 		}
 		switch r.Metric {
 		case types.Installs:
 			a.installs += r.Value
 		case types.Revenue:
-			a.revenue += r.Value
-			a.currency = r.Unit
+			if r.Unit != "" {
+				a.revenue[r.Unit] += r.Value
+			}
 		}
 	}
-
-	if len(byApp) == 0 {
+	if len(byKey) == 0 {
 		fmt.Printf("No data for %s → %s (Apple sales reports can lag ~1-2 days).\n", q.From, q.To)
 		return
 	}
 
-	list := make([]*agg, 0, len(byApp))
-	for _, a := range byApp {
-		list = append(list, a)
-	}
-	sort.Slice(list, func(i, j int) bool { return list[i].installs > list[j].installs })
-
-	fmt.Printf("\nstatra — stats %s → %s\n\n", q.From, q.To)
-	w := tabwriter.NewWriter(os.Stdout, 0, 2, 2, ' ', 0)
-	fmt.Fprintln(w, "PLATFORM\tAPP\tINSTALLS\tREVENUE")
-	var totalInstalls float64
-	revByCurrency := map[string]float64{} // currencies can't be summed together
-	for _, a := range list {
-		rev := "-"
-		if a.currency != "" {
-			rev = fmt.Sprintf("%.2f %s", a.revenue, a.currency)
-			revByCurrency[a.currency] += a.revenue
+	var apps, iaps []*appAgg
+	for _, a := range byKey {
+		if a.kind == types.KindIAP {
+			iaps = append(iaps, a)
+		} else if a.installs != 0 || totalMoney(a.revenue) != 0 {
+			// skip metric-only entries (e.g. Android crash rate) from the install table
+			apps = append(apps, a)
 		}
-		fmt.Fprintf(w, "%s\t%s\t%.0f\t%s\n", a.platform, a.name, a.installs, rev)
-		totalInstalls += a.installs
 	}
-	fmt.Fprintf(w, "\tTOTAL\t%.0f\t%s\n", totalInstalls, formatRevenue(revByCurrency))
-	w.Flush()
+
+	fmt.Printf("\nstatra — stats %s → %s\n", q.From, q.To)
+	grandRev := map[string]float64{}
+
+	if len(apps) > 0 {
+		sort.Slice(apps, func(i, j int) bool { return apps[i].installs > apps[j].installs })
+		fmt.Printf("\nAPPS (downloads)\n")
+		w := tabwriter.NewWriter(os.Stdout, 0, 2, 2, ' ', 0)
+		fmt.Fprintln(w, "PLATFORM\tAPP\tINSTALLS\tREVENUE")
+		var totalInstalls float64
+		for _, a := range apps {
+			fmt.Fprintf(w, "%s\t%s\t%.0f\t%s\n", a.platform, a.name, a.installs, fmtMoney(a.revenue))
+			totalInstalls += a.installs
+			addMoney(grandRev, a.revenue)
+		}
+		fmt.Fprintf(w, "\tTOTAL\t%.0f\t\n", totalInstalls)
+		w.Flush()
+	}
+
+	if len(iaps) > 0 {
+		sort.Slice(iaps, func(i, j int) bool { return totalMoney(iaps[i].revenue) > totalMoney(iaps[j].revenue) })
+		fmt.Printf("\nSUBSCRIPTIONS / IN-APP (revenue)\n")
+		w := tabwriter.NewWriter(os.Stdout, 0, 2, 2, ' ', 0)
+		fmt.Fprintln(w, "PRODUCT\tREVENUE")
+		for _, a := range iaps {
+			fmt.Fprintf(w, "%s\t%s\n", a.name, fmtMoney(a.revenue))
+			addMoney(grandRev, a.revenue)
+		}
+		w.Flush()
+	}
+
+	fmt.Printf("\nTOTAL REVENUE: %s\n", fmtMoney(grandRev))
 }
 
-// formatRevenue renders per-currency totals (mixed currencies are never summed).
-func formatRevenue(byCur map[string]float64) string {
-	if len(byCur) == 0 {
+func addMoney(dst, src map[string]float64) {
+	for c, v := range src {
+		dst[c] += v
+	}
+}
+
+func totalMoney(m map[string]float64) float64 {
+	var t float64
+	for _, v := range m {
+		t += v
+	}
+	return t
+}
+
+// fmtMoney renders per-currency amounts; mixed currencies are never summed.
+func fmtMoney(m map[string]float64) string {
+	if len(m) == 0 {
 		return "-"
 	}
-	curs := make([]string, 0, len(byCur))
-	for c := range byCur {
-		curs = append(curs, c)
+	curs := make([]string, 0, len(m))
+	for c := range m {
+		if m[c] != 0 { // hide zero-revenue currencies as noise
+			curs = append(curs, c)
+		}
 	}
-	sort.Slice(curs, func(i, j int) bool { return byCur[curs[i]] > byCur[curs[j]] })
+	if len(curs) == 0 {
+		return "-"
+	}
+	sort.Slice(curs, func(i, j int) bool { return m[curs[i]] > m[curs[j]] })
 	parts := make([]string, 0, len(curs))
 	for _, c := range curs {
-		parts = append(parts, fmt.Sprintf("%.2f %s", byCur[c], c))
+		parts = append(parts, fmt.Sprintf("%.2f %s", m[c], c))
 	}
 	return strings.Join(parts, " + ")
 }
@@ -165,5 +243,7 @@ func formatRevenue(byCur map[string]float64) string {
 func init() {
 	statsCmd.Flags().StringVar(&statsFrom, "from", "", "start date YYYY-MM-DD (default: 7 days ago)")
 	statsCmd.Flags().StringVar(&statsTo, "to", "", "end date YYYY-MM-DD (default: yesterday)")
+	statsCmd.Flags().StringVar(&statsApp, "app", "", "filter by app id or name substring")
+	statsCmd.Flags().BoolVar(&statsCSV, "csv", false, "output CSV")
 	rootCmd.AddCommand(statsCmd)
 }

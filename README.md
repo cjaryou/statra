@@ -104,13 +104,14 @@ scripts and CI — not just humans:
 ## Roadmap
 
 - [x] Single-binary CLI (cobra)
-- [x] Apple auth (ES256 JWT) + `ping`
+- [x] Apple auth (ES256 JWT) + `ping` (auto-discovers your apps)
+- [x] Apple Sales Reports: installs + revenue per app, app/subscription split
+- [x] `--json` / `--csv` machine-readable output (agent / script friendly)
+- [x] `--app` filter (by id or name)
 - [x] Google auth (service account) + `ping`
-- [ ] Apple Analytics / Sales report pipeline
-- [ ] Google metric-set queries + GCS CSV download
-- [x] `--json` machine-readable output (agent / script friendly)
-- [ ] Cross-platform merge + CSV output
-- [ ] Homebrew tap (`brew install statra`)
+- [x] Google vitals via Reporting API (crash rate)
+- [ ] Google installs/revenue via GCS monthly reports
+- [ ] Cross-platform merge polish + Homebrew tap (`brew install statra`)
 
 ## FAQ
 

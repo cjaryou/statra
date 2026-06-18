@@ -80,10 +80,10 @@ func (a *AppStore) get(path string) ([]byte, error) {
 
 // App is a minimal App Store Connect app record.
 type App struct {
-	ID       string
-	Name     string
-	BundleID string
-	SKU      string
+	ID       string `json:"id"`
+	Name     string `json:"name"`
+	BundleID string `json:"bundle_id"`
+	SKU      string `json:"sku"`
 }
 
 // Apps lists all apps visible to the API key.

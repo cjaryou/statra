@@ -55,6 +55,16 @@ func (a *AppStore) salesReportRaw(date string) ([]byte, error) {
 	return io.ReadAll(gz)
 }
 
+// classifyProduct maps Apple's "Product Type Identifier" to app vs in-app.
+// IAP/subscription rows use identifiers prefixed with "IA" or "FI"; everything
+// else (1, 1F, 7, 7F, F1, …) is an app download/update.
+func classifyProduct(pt string) types.Kind {
+	if strings.HasPrefix(pt, "IA") || strings.HasPrefix(pt, "FI") {
+		return types.KindIAP
+	}
+	return types.KindApp
+}
+
 // parseSales turns a SALES/SUMMARY TSV into installs + revenue rows for one day.
 // Columns are resolved by header name since they vary between report versions.
 func parseSales(tsv []byte, date string) []types.Row {
@@ -74,15 +84,16 @@ func parseSales(tsv []byte, date string) []types.Row {
 		return ""
 	}
 
-	// Aggregate per app across all SKUs/countries for the day.
+	// Aggregate per product (app or IAP) across all SKUs/countries for the day.
 	type agg struct {
 		name     string
 		id       string
+		kind     types.Kind
 		units    float64
 		proceeds float64
 		currency string
 	}
-	apps := map[string]*agg{}
+	prods := map[string]*agg{}
 
 	for sc.Scan() {
 		f := strings.Split(sc.Text(), "\t")
@@ -90,23 +101,26 @@ func parseSales(tsv []byte, date string) []types.Row {
 		if id == "" {
 			continue
 		}
+		kind := classifyProduct(col(f, "Product Type Identifier"))
+		key := string(kind) + "|" + id
 		units, _ := strconv.ParseFloat(col(f, "Units"), 64)
 		proceeds, _ := strconv.ParseFloat(col(f, "Developer Proceeds"), 64)
-		a := apps[id]
+		a := prods[key]
 		if a == nil {
-			a = &agg{name: col(f, "Title"), id: id, currency: col(f, "Currency of Proceeds")}
-			apps[id] = a
+			a = &agg{name: col(f, "Title"), id: id, kind: kind, currency: col(f, "Currency of Proceeds")}
+			prods[key] = a
 		}
 		a.units += units
 		a.proceeds += proceeds * units
 	}
 
-	rows := make([]types.Row, 0, len(apps)*2)
-	for _, a := range apps {
-		rows = append(rows,
-			types.Row{Platform: types.IOS, App: a.name, AppID: a.id, Date: date, Metric: types.Installs, Value: a.units, Unit: "count"},
-			types.Row{Platform: types.IOS, App: a.name, AppID: a.id, Date: date, Metric: types.Revenue, Value: a.proceeds, Unit: a.currency},
-		)
+	rows := make([]types.Row, 0, len(prods)*2)
+	for _, a := range prods {
+		// Installs only make sense for apps; IAPs contribute revenue only.
+		if a.kind == types.KindApp {
+			rows = append(rows, types.Row{Platform: types.IOS, App: a.name, AppID: a.id, Kind: a.kind, Date: date, Metric: types.Installs, Value: a.units, Unit: "count"})
+		}
+		rows = append(rows, types.Row{Platform: types.IOS, App: a.name, AppID: a.id, Kind: a.kind, Date: date, Metric: types.Revenue, Value: a.proceeds, Unit: a.currency})
 	}
 	return rows
 }

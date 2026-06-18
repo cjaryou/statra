@@ -27,11 +27,20 @@ const (
 	Revenue       Metric = "revenue"
 )
 
+// Kind distinguishes a first-party app from an in-app purchase / subscription.
+type Kind string
+
+const (
+	KindApp Kind = "app"
+	KindIAP Kind = "iap"
+)
+
 // Row is one normalized metric data point shared across both stores.
 type Row struct {
 	Platform Platform `json:"platform"`
-	App      string   `json:"app,omitempty"`    // app name
+	App      string   `json:"app,omitempty"`    // app or product name
 	AppID    string   `json:"app_id,omitempty"` // store identifier
+	Kind     Kind     `json:"kind,omitempty"`   // app | iap
 	Date     string   `json:"date"`             // YYYY-MM-DD
 	Metric   Metric   `json:"metric"`
 	Value    float64  `json:"value"`

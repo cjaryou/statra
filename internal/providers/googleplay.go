@@ -1,10 +1,13 @@
 package providers
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"time"
 
 	"golang.org/x/oauth2"
@@ -72,9 +75,85 @@ func (g *GooglePlay) Ping() (string, error) {
 	return g.cfg.PackageName, nil
 }
 
+// Fetch queries the Play Developer Reporting API for vitals (crash rate).
+//
+// Note: installs and revenue are NOT exposed by the Reporting API — Play writes
+// those as monthly CSV reports to a GCS bucket (GOOGLE_REPORTS_BUCKET), wired
+// separately. This returns daily crash-rate rows per the configured app.
 func (g *GooglePlay) Fetch(q types.Query, metrics []types.Metric) ([]types.Row, error) {
-	// Wired next: POST /vitals/crashrate:query etc. plus GCS CSV download.
-	_ = q
 	_ = metrics
-	return nil, fmt.Errorf("GooglePlay.Fetch: metric-set queries not wired yet — run `statra ping android` first to confirm auth, then we implement the crashrate/errors queries")
+	ctx := context.Background()
+	c, err := g.client(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	from, err := time.Parse("2006-01-02", q.From)
+	if err != nil {
+		return nil, fmt.Errorf("invalid --from: %w", err)
+	}
+	to, err := time.Parse("2006-01-02", q.To)
+	if err != nil {
+		return nil, fmt.Errorf("invalid --to: %w", err)
+	}
+
+	body := map[string]any{
+		"timelineSpec": map[string]any{
+			"aggregationPeriod": "DAILY",
+			"startTime":         date(from),
+			"endTime":           date(to.AddDate(0, 0, 1)), // endTime is exclusive
+		},
+		"metrics": []string{"crashRate"},
+	}
+	buf, _ := json.Marshal(body)
+	url := fmt.Sprintf("%s/apps/%s/crashRateMetricSet:query", reportingBase, g.cfg.PackageName)
+	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(buf))
+	req.Header.Set("Content-Type", "application/json")
+	res, err := c.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer res.Body.Close()
+	raw, _ := io.ReadAll(res.Body)
+	if res.StatusCode >= 400 {
+		return nil, fmt.Errorf("Reporting API %d: %s", res.StatusCode, string(raw))
+	}
+
+	var out struct {
+		Rows []struct {
+			StartTime struct {
+				Year, Month, Day int
+			} `json:"startTime"`
+			Metrics []struct {
+				Metric       string `json:"metric"`
+				DecimalValue struct {
+					Value string `json:"value"`
+				} `json:"decimalValue"`
+			} `json:"metrics"`
+		} `json:"rows"`
+	}
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return nil, err
+	}
+
+	var rows []types.Row
+	for _, r := range out.Rows {
+		d := fmt.Sprintf("%04d-%02d-%02d", r.StartTime.Year, r.StartTime.Month, r.StartTime.Day)
+		for _, m := range r.Metrics {
+			if m.Metric != "crashRate" {
+				continue
+			}
+			v, _ := strconv.ParseFloat(m.DecimalValue.Value, 64)
+			rows = append(rows, types.Row{
+				Platform: types.Android, App: g.cfg.PackageName, AppID: g.cfg.PackageName,
+				Kind: types.KindApp, Date: d, Metric: types.Crashes, Value: v, Unit: "rate",
+			})
+		}
+	}
+	return rows, nil
+}
+
+// date renders a Go time as the API's {year,month,day} object.
+func date(t time.Time) map[string]int {
+	return map[string]int{"year": t.Year(), "month": int(t.Month()), "day": t.Day()}
 }

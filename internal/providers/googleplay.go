@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strconv"
 	"time"
 
@@ -54,15 +55,16 @@ func (g *GooglePlay) client(ctx context.Context) (*http.Client, error) {
 	return &c, nil
 }
 
-// Ping verifies credentials by hitting the app's reporting endpoint.
+// Ping verifies credentials by reading the app's crash-rate metric set
+// metadata (a documented GET resource that requires app access).
 func (g *GooglePlay) Ping() (string, error) {
 	ctx := context.Background()
 	c, err := g.client(ctx)
 	if err != nil {
 		return "", err
 	}
-	url := fmt.Sprintf("%s/apps/%s:fetchReleaseFilterOptions", reportingBase, g.cfg.PackageName)
-	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, url, nil)
+	url := fmt.Sprintf("%s/apps/%s/crashRateMetricSet", reportingBase, g.cfg.PackageName)
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	res, err := c.Do(req)
 	if err != nil {
 		return "", err
@@ -72,7 +74,24 @@ func (g *GooglePlay) Ping() (string, error) {
 	if res.StatusCode >= 400 {
 		return "", fmt.Errorf("Reporting API %d: %s", res.StatusCode, string(body))
 	}
-	return g.cfg.PackageName, nil
+	var ms struct {
+		FreshnessInfo struct {
+			Freshnesses []struct {
+				AggregationPeriod string `json:"aggregationPeriod"`
+				LatestEndTime     struct{ Year, Month, Day int } `json:"latestEndTime"`
+			} `json:"freshnesses"`
+		} `json:"freshnessInfo"`
+	}
+	_ = json.Unmarshal(body, &ms)
+	if len(ms.FreshnessInfo.Freshnesses) == 0 {
+		return g.cfg.PackageName + " (auth OK, but no vitals data — app volume likely below Google's reporting threshold)", nil
+	}
+	info := g.cfg.PackageName + " — vitals available through:"
+	for _, f := range ms.FreshnessInfo.Freshnesses {
+		t := f.LatestEndTime
+		info += fmt.Sprintf(" %s=%04d-%02d-%02d", f.AggregationPeriod, t.Year, t.Month, t.Day)
+	}
+	return info, nil
 }
 
 // Fetch queries the Play Developer Reporting API for vitals (crash rate).
@@ -117,6 +136,9 @@ func (g *GooglePlay) Fetch(q types.Query, metrics []types.Metric) ([]types.Row, 
 	raw, _ := io.ReadAll(res.Body)
 	if res.StatusCode >= 400 {
 		return nil, fmt.Errorf("Reporting API %d: %s", res.StatusCode, string(raw))
+	}
+	if os.Getenv("STATRA_DEBUG") != "" {
+		fmt.Fprintf(os.Stderr, "[debug] crashRate query response:\n%s\n", string(raw))
 	}
 
 	var out struct {

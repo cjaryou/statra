@@ -157,7 +157,9 @@ func printStats(rows []types.Row, q types.Query) {
 		}
 	}
 	if len(byKey) == 0 {
-		fmt.Printf("No data for %s → %s (Apple sales reports can lag ~1-2 days).\n", q.From, q.To)
+		fmt.Printf("No data for %s → %s.\n", q.From, q.To)
+		fmt.Println("  • Apple sales reports can lag ~1-2 days.")
+		fmt.Println("  • Google vitals are hidden for apps below its volume threshold.")
 		return
 	}
 

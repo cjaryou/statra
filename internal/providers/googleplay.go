@@ -48,11 +48,15 @@ func (g *GooglePlay) client(ctx context.Context) (*http.Client, error) {
 	if err != nil {
 		return nil, fmt.Errorf("loading service account: %w", err)
 	}
-	c := http.Client{
-		Transport: &oauth2.Transport{Source: creds.TokenSource, Base: http.DefaultTransport},
-		Timeout:   30 * time.Second,
+	return oauthHTTPClient(creds.TokenSource), nil
+}
+
+// oauthHTTPClient builds an HTTP client that injects tokens from the source.
+func oauthHTTPClient(src oauth2.TokenSource) *http.Client {
+	return &http.Client{
+		Transport: &oauth2.Transport{Source: src, Base: http.DefaultTransport},
+		Timeout:   60 * time.Second,
 	}
-	return &c, nil
 }
 
 // Ping verifies credentials by reading the app's crash-rate metric set
@@ -102,6 +106,13 @@ func (g *GooglePlay) Ping() (string, error) {
 func (g *GooglePlay) Fetch(q types.Query, metrics []types.Metric) ([]types.Row, error) {
 	_ = metrics
 	ctx := context.Background()
+
+	// Installs come from the GCS bulk reports (no privacy threshold).
+	installs, err := g.fetchInstalls(ctx, q)
+	if err != nil {
+		return nil, err
+	}
+
 	c, err := g.client(ctx)
 	if err != nil {
 		return nil, err
@@ -158,7 +169,7 @@ func (g *GooglePlay) Fetch(q types.Query, metrics []types.Metric) ([]types.Row, 
 		return nil, err
 	}
 
-	var rows []types.Row
+	rows := installs // start with install rows, append vitals below
 	for _, r := range out.Rows {
 		d := fmt.Sprintf("%04d-%02d-%02d", r.StartTime.Year, r.StartTime.Month, r.StartTime.Day)
 		for _, m := range r.Metrics {

@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"sort"
@@ -66,9 +67,27 @@ var statsCmd = &cobra.Command{
 			}
 		}
 
+		if JSONOutput {
+			return emitJSON(rows, q)
+		}
 		printStats(rows, q)
 		return nil
 	},
+}
+
+// emitJSON writes the normalized rows plus the query window as JSON to stdout.
+func emitJSON(rows []types.Row, q types.Query) error {
+	if rows == nil {
+		rows = []types.Row{} // emit [] not null
+	}
+	out := struct {
+		From string      `json:"from"`
+		To   string      `json:"to"`
+		Rows []types.Row `json:"rows"`
+	}{From: q.From, To: q.To, Rows: rows}
+	enc := json.NewEncoder(os.Stdout)
+	enc.SetIndent("", "  ")
+	return enc.Encode(out)
 }
 
 // printStats aggregates rows per app and renders a table.

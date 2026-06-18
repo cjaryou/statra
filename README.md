@@ -80,6 +80,25 @@ statra ping android      # verify Google credentials
 
 statra stats all --from 2026-05-01 --to 2026-05-31
 statra stats ios --from 2026-05-01 --to 2026-05-31
+
+# machine-readable output for AI agents, scripts and pipelines
+statra stats ios --from 2026-05-01 --to 2026-05-31 --json
+```
+
+## Built for agents &amp; automation
+
+statra is designed to be consumed by AI coding agents (Claude Code, etc.),
+scripts and CI — not just humans:
+
+- **`--json`** emits normalized rows agents can parse directly — no scraping tables.
+- **stdout is data only**; all logs and errors go to **stderr**.
+- **Non-interactive**: credentials come from env / `.env`, never prompts.
+- **Stable exit codes**: non-zero on any failure.
+
+```json
+{ "from": "2026-05-01", "to": "2026-05-31",
+  "rows": [ { "platform": "ios", "app": "…", "app_id": "…",
+              "date": "2026-05-01", "metric": "installs", "value": 42, "unit": "count" } ] }
 ```
 
 ## Roadmap
@@ -89,7 +108,8 @@ statra stats ios --from 2026-05-01 --to 2026-05-31
 - [x] Google auth (service account) + `ping`
 - [ ] Apple Analytics / Sales report pipeline
 - [ ] Google metric-set queries + GCS CSV download
-- [ ] Cross-platform merge + output formats (table / JSON / CSV)
+- [x] `--json` machine-readable output (agent / script friendly)
+- [ ] Cross-platform merge + CSV output
 - [ ] Homebrew tap (`brew install statra`)
 
 ## FAQ

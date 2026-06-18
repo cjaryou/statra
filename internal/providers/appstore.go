@@ -78,8 +78,58 @@ func (a *AppStore) get(path string) ([]byte, error) {
 	return body, nil
 }
 
-// Ping verifies credentials by fetching the configured app and returns its name.
+// App is a minimal App Store Connect app record.
+type App struct {
+	ID       string
+	Name     string
+	BundleID string
+	SKU      string
+}
+
+// Apps lists all apps visible to the API key.
+func (a *AppStore) Apps() ([]App, error) {
+	body, err := a.get("/apps?limit=200")
+	if err != nil {
+		return nil, err
+	}
+	var out struct {
+		Data []struct {
+			ID         string `json:"id"`
+			Attributes struct {
+				Name     string `json:"name"`
+				BundleID string `json:"bundleId"`
+				SKU      string `json:"sku"`
+			} `json:"attributes"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(body, &out); err != nil {
+		return nil, err
+	}
+	apps := make([]App, 0, len(out.Data))
+	for _, d := range out.Data {
+		apps = append(apps, App{ID: d.ID, Name: d.Attributes.Name, BundleID: d.Attributes.BundleID, SKU: d.Attributes.SKU})
+	}
+	return apps, nil
+}
+
+// Ping verifies credentials. With ASC_APP_ID set it fetches that app; without
+// it, it lists all apps so you can discover the IDs.
 func (a *AppStore) Ping() (string, error) {
+	if a.cfg.AppID == "" {
+		apps, err := a.Apps()
+		if err != nil {
+			return "", err
+		}
+		if len(apps) == 0 {
+			return "no apps found (auth OK, but this key sees no apps)", nil
+		}
+		out := fmt.Sprintf("%d app(s) found:\n", len(apps))
+		for _, app := range apps {
+			out += fmt.Sprintf("  • %s  (id: %s, bundle: %s)\n", app.Name, app.ID, app.BundleID)
+		}
+		out += "\nTip: set ASC_APP_ID in .env to one of the ids above."
+		return out, nil
+	}
 	body, err := a.get("/apps/" + a.cfg.AppID)
 	if err != nil {
 		return "", err
@@ -100,9 +150,8 @@ func (a *AppStore) Ping() (string, error) {
 	return out.Data.Attributes.Name, nil
 }
 
+// Fetch pulls daily Sales Reports (installs + revenue) for the date range.
 func (a *AppStore) Fetch(q types.Query, metrics []types.Metric) ([]types.Row, error) {
-	// Wired next: POST /analyticsReportRequests, poll instances, gunzip+parse TSV.
-	_ = q
-	_ = metrics
-	return nil, fmt.Errorf("AppStore.Fetch: report pipeline not wired yet — run `statra ping ios` first to confirm auth, then we implement analyticsReportRequests")
+	_ = metrics // currently Sales Reports yield installs + revenue together
+	return a.fetchSales(q)
 }

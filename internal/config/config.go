@@ -53,10 +53,11 @@ func required(name string) (string, error) {
 
 // Apple holds App Store Connect API credentials.
 type Apple struct {
-	IssuerID   string
-	KeyID      string
-	PrivateKey []byte // PEM contents of the .p8 file
-	AppID      string
+	IssuerID     string
+	KeyID        string
+	PrivateKey   []byte // PEM contents of the .p8 file
+	AppID        string
+	VendorNumber string // required for Sales/Finance reports
 }
 
 func LoadApple() (*Apple, error) {
@@ -76,11 +77,15 @@ func LoadApple() (*Apple, error) {
 	if err != nil {
 		return nil, fmt.Errorf("reading ASC_PRIVATE_KEY_PATH: %w", err)
 	}
-	appID, err := required("ASC_APP_ID")
-	if err != nil {
-		return nil, err
-	}
-	return &Apple{IssuerID: issuer, KeyID: keyID, PrivateKey: pem, AppID: appID}, nil
+	// AppID is optional: when unset, `ping` lists all apps and shows their IDs.
+	// VendorNumber is only needed for `stats` (Sales Reports).
+	return &Apple{
+		IssuerID:     issuer,
+		KeyID:        keyID,
+		PrivateKey:   pem,
+		AppID:        os.Getenv("ASC_APP_ID"),
+		VendorNumber: os.Getenv("ASC_VENDOR_NUMBER"),
+	}, nil
 }
 
 // ServiceAccount is the subset of a Google service-account JSON we need.

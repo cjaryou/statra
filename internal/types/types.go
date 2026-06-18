@@ -30,7 +30,9 @@ const (
 // Row is one normalized metric data point shared across both stores.
 type Row struct {
 	Platform Platform `json:"platform"`
-	Date     string   `json:"date"` // YYYY-MM-DD
+	App      string   `json:"app,omitempty"`    // app name
+	AppID    string   `json:"app_id,omitempty"` // store identifier
+	Date     string   `json:"date"`             // YYYY-MM-DD
 	Metric   Metric   `json:"metric"`
 	Value    float64  `json:"value"`
 	Unit     string   `json:"unit,omitempty"` // e.g. "USD", "count"

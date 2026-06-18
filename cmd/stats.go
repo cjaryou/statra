@@ -13,15 +13,17 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/cjaryou/statra/internal/fx"
 	"github.com/cjaryou/statra/internal/providers"
 	"github.com/cjaryou/statra/internal/types"
 )
 
 var (
-	statsFrom string
-	statsTo   string
-	statsApp  string
-	statsCSV  bool
+	statsFrom     string
+	statsTo       string
+	statsApp      string
+	statsCSV      bool
+	statsCurrency string
 )
 
 var statsCmd = &cobra.Command{
@@ -75,6 +77,12 @@ var statsCmd = &cobra.Command{
 
 		rows = filterApp(rows, statsApp)
 
+		if statsCurrency != "" {
+			if err := convertCurrency(rows, statsCurrency); err != nil {
+				return err
+			}
+		}
+
 		switch {
 		case JSONOutput:
 			return emitJSON(rows, q)
@@ -85,6 +93,28 @@ var statsCmd = &cobra.Command{
 			return nil
 		}
 	},
+}
+
+// convertCurrency rewrites every revenue row into the target currency using
+// live FX rates, so cross-platform/cross-currency revenue sums into one number.
+func convertCurrency(rows []types.Row, target string) error {
+	conv, err := fx.Fetch()
+	if err != nil {
+		return fmt.Errorf("fetching FX rates: %w", err)
+	}
+	target = strings.ToUpper(target)
+	for i := range rows {
+		r := &rows[i]
+		if r.Metric != types.Revenue || r.Unit == "" || r.Unit == target {
+			continue
+		}
+		v, err := conv.Convert(r.Value, r.Unit, target)
+		if err != nil {
+			continue // leave unconvertible rows as-is
+		}
+		r.Value, r.Unit = v, target
+	}
+	return nil
 }
 
 // filterApp keeps rows whose app id equals, or name contains, the query.
@@ -247,5 +277,6 @@ func init() {
 	statsCmd.Flags().StringVar(&statsTo, "to", "", "end date YYYY-MM-DD (default: yesterday)")
 	statsCmd.Flags().StringVar(&statsApp, "app", "", "filter by app id or name substring")
 	statsCmd.Flags().BoolVar(&statsCSV, "csv", false, "output CSV")
+	statsCmd.Flags().StringVar(&statsCurrency, "currency", "", "convert all revenue to one currency (e.g. USD) for a single combined total")
 	rootCmd.AddCommand(statsCmd)
 }

@@ -81,6 +81,9 @@ statra ping android      # verify Google credentials
 statra stats all --from 2026-05-01 --to 2026-05-31
 statra stats ios --from 2026-05-01 --to 2026-05-31
 
+# one combined total: convert all revenue (USD+EUR+NOK+…) into a single currency
+statra stats all --from 2026-05-01 --to 2026-05-31 --currency USD
+
 # machine-readable output for AI agents, scripts and pipelines
 statra stats ios --from 2026-05-01 --to 2026-05-31 --json
 ```
@@ -108,6 +111,7 @@ scripts and CI — not just humans:
 - [x] Apple Sales Reports: installs + revenue per app, app/subscription split
 - [x] `--json` / `--csv` machine-readable output (agent / script friendly)
 - [x] `--app` filter (by id or name)
+- [x] `--currency` — normalize all revenue to one currency (single combined total)
 - [x] Google auth (service account) + `ping`
 - [x] Google vitals via Reporting API (crash rate)
 - [ ] Google installs/revenue via GCS monthly reports

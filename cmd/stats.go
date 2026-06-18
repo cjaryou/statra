@@ -167,6 +167,48 @@ type appAgg struct {
 	revenue  map[string]float64 // currency -> amount
 }
 
+// printSummary renders a per-platform headline (installs + revenue) plus the
+// combined total — the cross-platform view that is statra's reason to exist.
+func printSummary(rows []types.Row) {
+	order := []types.Platform{types.IOS, types.Android}
+	installs := map[types.Platform]float64{}
+	rev := map[types.Platform]map[string]float64{types.IOS: {}, types.Android: {}}
+	grand := map[string]float64{}
+	var grandInstalls float64
+	seen := map[types.Platform]bool{}
+
+	for _, r := range rows {
+		seen[r.Platform] = true
+		switch r.Metric {
+		case types.Installs:
+			installs[r.Platform] += r.Value
+			grandInstalls += r.Value
+		case types.Revenue:
+			if r.Unit != "" {
+				rev[r.Platform][r.Unit] += r.Value
+				grand[r.Unit] += r.Value
+			}
+		}
+	}
+
+	fmt.Printf("\nSUMMARY\n")
+	w := tabwriter.NewWriter(os.Stdout, 0, 2, 2, ' ', 0)
+	fmt.Fprintln(w, "PLATFORM\tINSTALLS\tREVENUE")
+	platforms := 0
+	for _, p := range order {
+		if !seen[p] {
+			continue
+		}
+		platforms++
+		fmt.Fprintf(w, "%s\t%.0f\t%s\n", p, installs[p], fmtMoney(rev[p]))
+	}
+	// Only show a combined TOTAL when more than one platform is present.
+	if platforms > 1 {
+		fmt.Fprintf(w, "TOTAL\t%.0f\t%s\n", grandInstalls, fmtMoney(grand))
+	}
+	w.Flush()
+}
+
 // printStats aggregates rows per product and renders app + subscription tables.
 func printStats(rows []types.Row, q types.Query) {
 	byKey := map[string]*appAgg{}
@@ -204,6 +246,9 @@ func printStats(rows []types.Row, q types.Query) {
 	}
 
 	fmt.Printf("\nstatra — stats %s → %s\n", q.From, q.To)
+
+	printSummary(rows)
+
 	grandRev := map[string]float64{}
 
 	if len(apps) > 0 {

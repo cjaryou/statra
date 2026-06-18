@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"sort"
+	"strings"
 	"text/tabwriter"
 	"time"
 
@@ -110,20 +111,36 @@ func printStats(rows []types.Row, q types.Query) {
 	fmt.Printf("\nstatra — stats %s → %s\n\n", q.From, q.To)
 	w := tabwriter.NewWriter(os.Stdout, 0, 2, 2, ' ', 0)
 	fmt.Fprintln(w, "PLATFORM\tAPP\tINSTALLS\tREVENUE")
-	var totalInstalls, totalRevenue float64
-	var cur string
+	var totalInstalls float64
+	revByCurrency := map[string]float64{} // currencies can't be summed together
 	for _, a := range list {
 		rev := "-"
 		if a.currency != "" {
 			rev = fmt.Sprintf("%.2f %s", a.revenue, a.currency)
-			cur = a.currency
+			revByCurrency[a.currency] += a.revenue
 		}
 		fmt.Fprintf(w, "%s\t%s\t%.0f\t%s\n", a.platform, a.name, a.installs, rev)
 		totalInstalls += a.installs
-		totalRevenue += a.revenue
 	}
-	fmt.Fprintf(w, "\tTOTAL\t%.0f\t%.2f %s\n", totalInstalls, totalRevenue, cur)
+	fmt.Fprintf(w, "\tTOTAL\t%.0f\t%s\n", totalInstalls, formatRevenue(revByCurrency))
 	w.Flush()
+}
+
+// formatRevenue renders per-currency totals (mixed currencies are never summed).
+func formatRevenue(byCur map[string]float64) string {
+	if len(byCur) == 0 {
+		return "-"
+	}
+	curs := make([]string, 0, len(byCur))
+	for c := range byCur {
+		curs = append(curs, c)
+	}
+	sort.Slice(curs, func(i, j int) bool { return byCur[curs[i]] > byCur[curs[j]] })
+	parts := make([]string, 0, len(curs))
+	for _, c := range curs {
+		parts = append(parts, fmt.Sprintf("%.2f %s", byCur[c], c))
+	}
+	return strings.Join(parts, " + ")
 }
 
 func init() {

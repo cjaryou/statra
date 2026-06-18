@@ -15,10 +15,16 @@ statra normalizes both into one shape so you can chart them together.
 
 ## Install
 
+statra is a single static binary — no Node, Python, or runtime required.
+
 ```bash
-npm install
-npm run build
-npm link   # optional: makes `statra` global
+# from source (Go 1.26+)
+go install github.com/cjaryou/statra@latest
+
+# or build locally
+git clone https://github.com/cjaryou/statra
+cd statra
+go build -o statra .
 ```
 
 ## Configure
@@ -39,9 +45,14 @@ statra ping android      # verify Google credentials
 statra stats all --from 2026-05-01 --to 2026-05-31
 ```
 
+## Built with
+
+Go — compiles to a single static binary for easy distribution (`brew` / `go install`),
+the same approach as `gh`, `terraform`, and the leading Play Console CLIs.
+
 ## Status
 
-- [x] Project scaffold + CLI router
+- [x] Project scaffold + CLI (cobra)
 - [x] Apple auth (ES256 JWT) + `ping`
 - [x] Google auth (service account) + `ping`
 - [ ] Apple Analytics/Sales report pipeline

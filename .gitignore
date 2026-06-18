@@ -1,6 +1,7 @@
-node_modules/
-dist/
-*.log
+# Build output
+/statra
+/dist/
+*.exe
 
 # Secrets — never commit credentials
 .env
@@ -8,4 +9,6 @@ dist/
 *-service-account.json
 service-account*.json
 credentials/
-.storepulse/
+
+# OS / editor
+.DS_Store
